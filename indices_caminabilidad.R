@@ -141,7 +141,7 @@ summary(dset_aggregated$promedio)
 
 
 plot(dset_aggregated$index_pca, dset_aggregated$promedio)
-
+cor = cor.test(dset_aggregated$index_pca, dset_aggregated$promedio)
 ggplot(data = dset_aggregated, aes(x = index_pca, y = promedio)) +
   geom_point(
     # color="transparent",
@@ -156,7 +156,18 @@ ggplot(data = dset_aggregated, aes(x = index_pca, y = promedio)) +
   labs(title = "Comparación entre promedio simple \n y ponderación mediante PCA") +
   ylim(0,100) + xlim(0,100) +
   ylab("IC con promedio simple") +
-  xlab("IC ponderado con PCA")
+  xlab("IC ponderado con PCA") +
+  annotate("text", x = Inf, y = -Inf, label = paste0("rho = ",
+                                                     round(cor$estimate, 4),
+                                                     "\n p-value = ",
+                                                     round(cor$p.value, 4)),
+           hjust=1.1, vjust=-1.1, col="black", cex=3,
+           fontface = "bold", alpha = 0.8)
+ggsave("scatter_plot_IC.jpg",
+       width = 15,
+       height = 15,
+       units = c("cm"))
+
 
 cor.test(dset_aggregated$index_pca, dset_aggregated$promedio)
 
