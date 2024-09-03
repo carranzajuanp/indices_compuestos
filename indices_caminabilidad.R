@@ -3,7 +3,9 @@ setwd("~/Documentos/GitHub/indices_compuestos/")
 datos = read.csv("indice_caminabilidad.csv", header = T, sep = ",")
 names(datos)
 library(dplyr)
-# Creamos la base de datos conforme lo pide la librería:
+library(ggplot2)
+
+# Creamos la base de datos conforme lo que pide la librería:
 library(COINr)
 datos$Área.Movilidad.Motorizada = as.numeric(gsub(",",".", datos$Área.Movilidad.Motorizada))
 datos$IC = as.numeric(gsub(",",".",datos$IC))
@@ -15,8 +17,12 @@ datos <- datos %>%
   summarise_at(vars("Arbolado.y.Vegetación":"IC"), mean)
 summary(datos)
 
+# Eliminamos la siguiente variable ya que no tiene varianza, es una constante
 datos$Distancias.Paradas.TP = NULL
 
+names(datos)
+
+# Nos quedamos con las variables necesarias para el cálculo del índice
 iData = datos[,2:17]
 iData = na.omit(iData)
 
@@ -32,6 +38,7 @@ iCode = c("Arbolado.y.Vegetación","Limpieza.Viaria","Contaminación.Sonora","Se
           "Obras.en.Construcción","Presencia.de.Obstáculos","Área.Movilidad.Motorizada","Actividad.Comercial","Ancho.Vereda.Útil",
           "Estado.de.Vereda","Mobiliario.Urbano","Pendientes","Movilidad.Reducida","Estado.Rampas",
           "Guía.no.Videntes","Index")
+
 Level = c(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2)
 # Direction = c(1, 1, -1, 1, 1, -1, -1, -1, -1, 1, 1, 1, -1, 1, 1, 1, 1)
 # Direction is set to 1 if higher values of the indicator should result in higher values of the index, and -1 in the opposite case.
@@ -88,7 +95,7 @@ summary(dset_aggregated$promedio)
 
 
 plot(dset_aggregated$index_pca, dset_aggregated$promedio,
-     main = "Comparación Promedio vs PCA",
+     main = "Comparación Promedio vs Infomax",
      ylab = "Indice con promedio simple",
      xlab = "Indice ponderado vía PCA")
 cor.test(dset_aggregated$index_pca, dset_aggregated$promedio)
@@ -180,32 +187,56 @@ summary(map)
 class(iData$uCode)
 map = left_join(map, dset_aggregated[,c("uCode","index_pca","promedio")])
 summary(map)
-library(mapview)
+# library(mapview)
 map = st_cast(map,"LINESTRING")
-mapview(map, zcol = "index_pca")
-map = data.table::melt(map, measure.vars = c("index_pca","promedio"))
-class(map)
-map = st_as_sf(map, sf_column_name = "geom")
-map$value = round(map$value, 2)
-mapview_facet <- function(x,f) {
+# mapview(map, zcol = "index_pca")
+# map = data.table::melt(map, measure.vars = c("index_pca","promedio"))
+# class(map)
+# map = st_as_sf(map, sf_column_name = "geom")
+# map$value = round(map$value, 2)
+# mapview_facet <- function(x,f) {
+#   
+#   criteria=split(x,x[[f]])
+#   nms = paste(deparse(substitute(x)), names(criteria), sep = "-")
+#   for (i in 1:length(criteria)) {
+#     map=mapview::mapview(criteria[[i]], zcol = "value", layer.name = nms[i])
+#     assign(paste0("map_",i), map)
+#   }
+#   set=list(map_1)
+#   for (i in 2:length(criteria)) {set=append(set, get(paste0("map_",i)))}
+#   leafsync::latticeView(set)
+# }
+# 
+# mapa = mapview_facet(x = map, f = "variable")
+# mapa 
+
+
+# st_write(map, "~/Descargas/2022-IC_Centro_01-con-formulas-20230914T133051Z-001/indice.gpkg")
+names(map)
+summary(map)
+map = map[, c("NOMBRE", "index_pca", "promedio")]
+library(tidyverse)
+map = gather(map, indice, valor, index_pca:promedio, factor_key=TRUE)
+
+library(tmap)
+tmap_mode("plot")
+# c_osm <- tmaptools::read_osm(tmaptools::bb(map), ext = 1.2)
+library(basemaps)
+library(mapview)
+bbox = st_as_sfc(st_bbox(map)) %>% 
+  st_transform(22174) %>%  st_buffer(500) %>% st_transform(4326)
+mapview(bbox)
+
+c_osm <- basemaps::basemap_raster(ext = bbox, map_service = "carto", map_type = "light")
+map = st_transform(map, 4326)
+
+tm_shape(c_osm) +
+  tm_rgb() +
+  tm_shape(map) + tm_lines(col = "valor") +
+  tm_facets("indice") +
+  tm_legend(legend.outside = T, legend.position = c("right","bottom")) +
+  tm_layout(panel.labels = c('IC PCA','IC promedio'), asp = 0.8)
   
-  criteria=split(x,x[[f]])
-  nms = paste(deparse(substitute(x)), names(criteria), sep = "-")
-  for (i in 1:length(criteria)) {
-    map=mapview::mapview(criteria[[i]], zcol = "value", layer.name = nms[i])
-    assign(paste0("map_",i), map)
-  }
-  set=list(map_1)
-  for (i in 2:length(criteria)) {set=append(set, get(paste0("map_",i)))}
-  leafsync::latticeView(set)
-}
-
-mapa = mapview_facet(x = map, f = "variable")
-mapa 
-
-
-st_write(map, "~/Descargas/2022-IC_Centro_01-con-formulas-20230914T133051Z-001/indice.gpkg")
-
 
 ### PCA
 # Elbow Method

@@ -1,0 +1,241 @@
+---
+title: "Indices Compuestos"
+author: "JPC"
+date: "`r Sys.Date()`"
+output: html_document
+bibliography: ref.bib 
+lang: sp
+header-includes:
+  - \usepackage[spanish]{babel}
+---
+
+# Metodología de cálculo de índices compuestos
+
+Como ejemplo para esta breve presentación de la metodología de cálculo de índices compuestos se utilizará la base de datos relevada por el Observatorio Urbano de Córdoba (UNC) en el cálculo del índice de caminabilidad en el área central de la ciudad de Córdoba.
+
+En el caso de la construcción de índices, dar el mismo peso a todas las variables utilizadas puede inducir a errores, dado que si dos o más variables que tienen una correlación alta (aportan información similar) tienen el mismo peso en la ponderación del índice, se estará duplicando o triplicando la importancia que se da a la información que comparten entre ellas. Esto, además, minimiza el tamaño del efecto de la información que pueda estar contenida en sólo una variable que no está correlacionada con el resto.
+
+En primer lugar, corresponde revisar brevemente los fundamentos del análisis de componentes principales. La finalidad de este tipo de análisis consiste en encontrar variables síntesis a partir de un conjunto de datos. En el caso del ejemplo propuesto, muchas de las variables utilizadas pueden aportar información muy similar (al estar altamente correlacionadas), en tanto que otras pueden aportar información única.
+
+La finalidad de este análisis consiste en identificar conjuntos de variables que puedan ser descriptas de manera relativamente eficiente con una sola variable sintética, llamada componente principal.
+
+Comanzamos por describir brevemente la base de datos utilizada.
+
+```{r, message=F, warning=F, echo=F}
+rm(list=ls())
+library(tidyverse)
+library(summarytools)
+library(COINr)
+st_options(plain.ascii = FALSE, style = "rmarkdown")
+setwd("~/Documentos/GitHub/indices_compuestos/")
+datos = read.csv("indice_caminabilidad.csv", header = T, sep = ",")
+datos$Área.Movilidad.Motorizada = as.numeric(gsub(",",".", datos$Área.Movilidad.Motorizada))
+datos$IC = as.numeric(gsub(",",".",datos$IC))
+datos = na.omit(datos)
+print(dfSummary(datos[,2:18], 
+                varnumbers   = FALSE, 
+                valid.col    = FALSE, 
+                graph.magnif = 0.76),
+      method = 'render')
+```
+
+## Análisis de componentes principales
+
+Realizamos un análisis de componentes principales, y graficamos los vectores de cada una de las variables en el espacio bidimensional determinado por las dos componentes más importantes:
+
+```{r, message=F, warning=F, echo=F}
+ver = select_if(datos, is.numeric)
+ver = ver[,2:18]
+set.seed (7)
+library(e1071)
+library(caret)
+process <- preProcess(as.data.frame(ver), method=c("center","scale"))
+ver <- predict(process, as.data.frame(ver))
+ver$Distancias.Paradas.TP = NULL
+# ver$Área.Movilidad.Motorizada = NULL
+zona <- cmeans(ver, 3, 100, method="cmeans", m=1.1)
+library(factoextra)
+res.pca <- prcomp(ver, scale = TRUE) # Se hace el an?lisis de CP y se los escala
+eig.val <- get_eigenvalue(res.pca) # Se calculan los valores propios - Landa - que acopa?a a cada CP
+eig.val = round(eig.val, digits = 2) # se los redondea a dos decimales
+
+# Se obtienen los valores para las variables 
+
+res.var <- get_pca_var(res.pca) # Calcula las componentes principales
+res.ind <- get_pca_ind(res.pca)
+ver$cluster = zona$cluster
+groups <- as.factor(ver$cluster)
+
+col <- RColorBrewer::brewer.pal(3, "Set1")
+
+fviz_pca_biplot(res.pca,
+                col.ind = groups, # color by groups
+                palette = col,
+                col.var = "#000000",
+                gradient.cols = "fff3af",
+                addEllipses = TRUE,
+                legend.title = "Grupos",
+                axes=c(1, 2),
+                geom = c("point"),
+                jitter = list(what = "label", width = NULL, height = NULL),
+                title="BI - Plot variables - Observaciones",
+                alpha=1 )
+
+```
+
+Como se puede observar, la componente principal graficada en el eje de las ordenadas resumen de manera bastante acabada a la información de las varaibles "pendientes", "contaminación sonora" y "ancho de vereda útil". El resto de las variables se resumen de manera un danto más dispersa en torno a la segunda componente principal (eje horizontal).
+
+A partir de los valores propios de cada uno de estos vectores, se puede obtener el peso de cada variable. Esto no implica un orden de prelación respecto a la explicación causal de cada una de ellas en la explicación del fenómeno, sino simplementa a la manera más eficiente de extraer información útil para la generación correcta del índice buscado.
+
+## Cálculo de índices compuestos
+
+La metodología aplicada para el cálculo del índice es la desarrollada en [@ocde], y en cálculo realizado como ejemplo se utilizará la librería de R {COINr} desarrollada por [@coinr].
+
+En primer lugar, se calcula un índice asignando a cada variable el mismo peso. Para ello, previamente, cada variable se escala para que varíe entre 0 y 100.
+
+```{r, message=F, warning=F, echo=F}
+process <- preProcess(as.data.frame(datos), method=c("range"))
+aux <- predict(process, as.data.frame(datos))
+aux = aux[,2:18]
+aux$Distancias.Paradas.TP = NULL
+datos$IC_promedio = rowMeans(aux)
+summary(datos$IC_promedio) * 100
+```
+
+Posteriormente, se utilizan los valores propios del análisis de componentes principales para calcular pesos.
+
+```{r, message=F, warning=F, echo=F}
+datos$id = 1:nrow(datos)
+iData = datos[,c(2:8, 10:18)]
+iData = na.omit(iData)
+
+
+iData$uCode = as.character(datos$id)
+iData = iData[,c("uCode","Arbolado.y.Vegetación","Limpieza.Viaria","Contaminación.Sonora","Señaización.......H.y.V","Sendas.Peatonales","Obras.en.Construcción","Presencia.de.Obstáculos","Área.Movilidad.Motorizada","Actividad.Comercial","Ancho.Vereda.Útil","Estado.de.Vereda","Mobiliario.Urbano","Pendientes","Movilidad.Reducida","Estado.Rampas","Guía.no.Videntes")]
+
+# Creamos el bicho que le da estructura a los índices:
+iCode = c("Arbolado.y.Vegetación","Limpieza.Viaria","Contaminación.Sonora","Señaización.......H.y.V","Sendas.Peatonales","Obras.en.Construcción","Presencia.de.Obstáculos","Área.Movilidad.Motorizada","Actividad.Comercial","Ancho.Vereda.Útil","Estado.de.Vereda","Mobiliario.Urbano","Pendientes","Movilidad.Reducida","Estado.Rampas","Guía.no.Videntes","Index")
+
+Level = c(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2)
+# Direction = c(1, 1, -1, 1, 1, -1, -1, -1, -1, 1, 1, 1, -1, 1, 1, 1, 1)
+# Direction is set to 1 if higher values of the indicator should result in higher values of the index, and -1 in the opposite case.
+Direction = c(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
+Weight = c(1, 1, 1, 1, 1, 1, 1,  1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
+Parent = c("Index","Index", "Index", "Index", "Index", "Index", "Index", "Index", "Index", "Index", "Index", "Index", "Index","Index","Index","Index", NA)
+Type = c("Indicator","Indicator","Indicator","Indicator","Indicator","Indicator", "Indicator", "Indicator", "Indicator", "Indicator", "Indicator", "Indicator", "Indicator", "Indicator", "Indicator", "Indicator","Aggregate")
+iMeta = data.frame(cbind(iCode,
+                         Level,
+                         Direction,
+                         Weight,
+                         Parent,
+                         Type))
+
+iMeta$Level = as.numeric(Level)
+iMeta$Direction = as.numeric(Direction)
+iMeta$Weight = as.numeric(Weight)
+
+check_iData(iData)
+check_iMeta(iMeta)
+
+iMeta = iMeta[,c("Level","iCode","Direction","Weight","Parent","Type")]
+
+iData <- iData %>% mutate_if(is.integer, as.numeric)
+
+coin <- new_coin(iData = iData,
+                 iMeta = iMeta)
+coin <- Normalise(coin, dset = "Raw")
+
+coin <- Aggregate(coin, dset = "Normalised", w = coin$Meta$Weights$Original)
+
+coin <- get_PCA(coin, dset = "Aggregated", Level =  1,
+                weights_to = "pesos", out2 = "coin")
+
+importancia = coin$Meta$Weights$pesos[1:nrow(coin$Meta$Weights$pesos)-1,]
+importancia$importancia = paste0(round((abs(importancia$Weight)) / 
+  sum(abs(importancia$Weight)) * 100, 1), " %")
+importancia
+
+coin <- Aggregate(coin, dset = "Normalised", w = coin$Meta$Weights$pesos)
+dset_aggregated <- get_dset(coin, dset = "Aggregated")
+dset_aggregated = dset_aggregated %>% 
+  mutate(promedio = (Arbolado.y.Vegetación + Limpieza.Viaria + Contaminación.Sonora + Señaización.......H.y.V + Sendas.Peatonales +
+                     Obras.en.Construcción + Presencia.de.Obstáculos + Área.Movilidad.Motorizada + Actividad.Comercial + Ancho.Vereda.Útil +
+                     Estado.de.Vereda + Mobiliario.Urbano + Pendientes + Movilidad.Reducida + Estado.Rampas +
+                     Guía.no.Videntes) / 16)
+
+dset_aggregated = rename(dset_aggregated, index_pca = Index)
+
+```
+
+Luego de aplicar las ponderaciones resultantes, el nuevo Índice tiene la siguiente distribución:
+
+```{r, message=F, warning=F, echo=F}
+round(summary(dset_aggregated$index_pca), 2)
+```
+
+Como se puede observar, si bien hay diferencias, la correlación entre ambos índices es positiva y estadísticamente significativa:
+
+```{r, message=F, warning=F, echo=F}
+cor = cor.test(dset_aggregated$index_pca, dset_aggregated$promedio)
+ggplot(data = dset_aggregated, aes(x = index_pca, y = promedio)) +
+  geom_point(
+    # color="transparent",
+    fill="#69b3a2",
+    shape=21,
+    alpha=0.5,
+    size= 1.5,
+    stroke = 1
+  ) +
+  geom_smooth(method=lm , color="black", se=FALSE) +
+  hrbrthemes::theme_ipsum() +
+  theme(aspect.ratio=1) +
+  labs(title = "Comparación entre promedio simple \n y ponderación mediante PCA") +
+  ylim(0,100) + xlim(0,100) +
+  ylab("IC con promedio simple") +
+  xlab("IC ponderado con PCA") +
+  annotate("text", x = Inf, y = -Inf, label = paste0("rho = ",
+                                                     round(cor$estimate, 4),
+                                                     "\n p-value = ",
+                                                     round(cor$p.value, 4)),
+           hjust=1.1, vjust=-1.1, col="black", cex=3,
+           fontface = "bold", alpha = 0.8)
+```
+
+Lo anterior también puede apreciarse en un mapa interactivo, en donde la estructura del indice de caminabildiad propuesta por ambas metodologías es similar. El único cambio significativo parece ser que la ponderación a partir de PCA marca de manera más intensiva las diferencias.
+
+```{r, message=F, warning=F, echo=F}
+library(sf)
+map = suppressMessages(st_read("~/Descargas/2022-IC_Centro_01-con-formulas-20230914T133051Z-001/2022-IC_Centro_01-con-formulas/2022-IMPAR.gpkg",
+              fid_column_name = "uCode", quiet = TRUE))
+map = left_join(map, dset_aggregated[,c("uCode","index_pca","promedio")])
+# library(mapview)
+map = st_cast(map,"LINESTRING")
+
+map = map[, c("NOMBRE", "index_pca", "promedio")]
+map = gather(map, indice, valor, index_pca:promedio, factor_key=TRUE)
+
+library(tmap)
+tmap_mode("view")
+# c_osm <- tmaptools::read_osm(tmaptools::bb(map), ext = 1.2)
+library(basemaps)
+library(mapview)
+bbox = st_as_sfc(st_bbox(map)) %>% 
+  st_transform(22174) %>%  st_buffer(500) %>% st_transform(4326)
+c_osm <- suppressMessages(basemaps::basemap_raster(ext = bbox, map_service = "carto", map_type = "light", verbose = FALSE))
+map = st_transform(map, 4326)
+
+tm_shape(c_osm) +
+  tm_rgb() +
+  tm_shape(map) + tm_lines(col = "valor") +
+  tm_facets("indice") +
+  tm_legend(legend.outside = T, legend.position = c("right","bottom")) +
+  tm_layout(panel.labels = c('IC PCA','IC promedio'), asp = 0.8)
+```
+
+<div id="refs">
+
+# Referencias
+
+</div>
+
+
